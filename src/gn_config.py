@@ -3,44 +3,14 @@
 # ===============================================================================================
 
 import configparser
-from mysql.connector.constants import ClientFlag
 
-class gn_ConfReader:
-    @staticmethod
-    def db_configReader (filename, section):
-        try:
-            # Database connection settings
-            config = configparser.ConfigParser()
-            config.read( filename )
-            conf_dict = {
-                "user": config.get( section, "user" ),
-                "password": config.get( section, "password" ),
-                "host": config.get( section, "host" ),
-                "port": config.get( section, "port" ),
-                "database": config.get( section, "database" ),
-                "use_unicode": config.getboolean( section, "use_unicode" ),
-                "charset": config.get( section, "charset" ),
-                "raise_on_warnings": config.getboolean( section, "raise_on_warnings" )
-            }
-            # If there are ssl ,put them into directory.
-            if (config.has_option(section, "ssl_ca_path") and config.has_option(section, "ssl_cert_path") and config.get( section, "ssl_key_path" )):
-                conf_dict["client_flags"] = [ClientFlag.SSL]
-                conf_dict["ssl_ca"] = config.get( section, "ssl_ca_path" )
-                conf_dict["ssl_cert"] = config.get( section, "ssl_cert_path" )
-                conf_dict["ssl_key"] = config.get( section, "ssl_key_path" )
-            return conf_dict
-        except Exception as error:
-            raise Exception ("Database config reader error: %s" % error)
-        
-    @staticmethod
-    def mail_smtp_configReader (filename, section):
-        return gn_ConfReader.configReader(filename, section)
-
+class gn_ConfRW:
+    
     @staticmethod
     def configReader(filename, section):
         try:
-            # Database connection settings
             config = configparser.ConfigParser()
+            config.optionxform = str # Preserve case
             config.read( filename )
             conf_dict = {}
             for option in config.options(section):
@@ -51,3 +21,16 @@ class gn_ConfReader:
                 return conf_dict
         except Exception as error:
             raise Exception ("%s config reader error: %s" % (section, error))
+
+    @staticmethod
+    def configWriter(filename, section, conf_dict):
+        try:
+            config = configparser.ConfigParser()
+            config.optionxform = str # Preserve case
+            config.read( filename )
+            for option in conf_dict:
+                config.set(section, option, conf_dict[option])
+            with open(filename, 'w') as configfile:
+                config.write(configfile)
+        except Exception as error:
+            raise Exception ("%s config writer error: %s" % (section, error))

@@ -17,7 +17,7 @@ class PicSimilarProc:
         pass
 
     # get image files depending on extensions
-    def get_image_files(self, directory, extensions = None):
+    def get_source_files(self, directory, extensions = None):
         if extensions is None:
             extensions = PicConst.IMG_EXTENSIONS
         else:
