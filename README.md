@@ -12,10 +12,12 @@ PicDupScan to focus on the core problem in a more controlled and transparent way
 
 PicDupScan is a graphical user interface (GUI) tool developed with Python and PyQt6, designed to help users scan and find duplicate or highly similar images within specified folders. It supports common image formats as well as RAW files, and provides intuitive preview and management functions, making the process of cleaning up your image library much easier.
 
+
 ## Branch Strategy
 
 - **main**: v2 (current development)
 - **v1**: legacy v1 codebase (maintenance only)
+
 
 ## ✨ Features
 
