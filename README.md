@@ -12,16 +12,35 @@ PicDupScan to focus on the core problem in a more controlled and transparent way
 
 PicDupScan is a graphical user interface (GUI) tool developed with Python and PyQt6, designed to help users scan and find duplicate or highly similar images within specified folders. It supports common image formats as well as RAW files, and provides intuitive preview and management functions, making the process of cleaning up your image library much easier.
 
-
 ## Branch Strategy
 
 - **main**: v2 (current development)
 - **v1**: legacy v1 codebase (maintenance only)
 
-
 ## ✨ Features
 
-I am working on it... = = b, and I will update the README.md file as soon as I have something to show or a new function to add.
+### 🔍 Advanced Scanning
+- **Visual Similarity Search**: Uses perceptual hashing (pHash) to detect duplicate images even if they are resized, rotated, or minorly edited.
+- **RAW File Support**: Native support for scanning camera RAW formats (DNG, CR2, ARW, NEF, etc.) by comparing direct sensor data.
+- **Configurable Scope**: Toggle scanning for specific file types (Images, RAWs, Videos) and customize file extension filters.
+
+### 🖥️ Modern GUI (PyQt6)
+- **Split-View Interface**: Real-time log, hierarchical results tree, and image preview all in one window.
+- **Side-by-Side Comparison**: Instantly compare a candidate duplicate against the original "Target" image.
+- **System Theme Integration**: The interface adapts to your OS light/dark mode preferences.
+
+### 📸 Universal EXIF Viewer
+- **Comprehensive Metadata**: Reads EXIF data from both standard images and RAW files.
+- **Smart Diffing**: Automatically highlights differences between the two compared images in red.
+- **Clean UI**: "Photoshop-like" tabular display with smart filtering of noise/unknown tags.
+- **Auto-Fallbacks**: Handles missing or unreadable metadata gracefully.
+
+### 📂 File Management
+- **Safe Deletion**: Deletes files to the Recycle Bin (`send2trash`) rather than permanent removal, preventing accidental data loss.
+- **Batch Operations**: "Select All", "Deselect All", and "Delete Checked" for efficient cleanup.
+- **Context Actions**: Right-click to open files directly or view them in their explorer folder.
+
+(I am working on it... = = b, and I will update the README.md file as soon as I have something to show or a new function to add.)
 
 ## 🛠️ Requirements
 

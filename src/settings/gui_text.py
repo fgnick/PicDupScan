@@ -76,6 +76,7 @@ class LogText:
 
 @dataclass(frozen=True)
 class MenuText:
+    EXIF: str = "Show Exif"
     VIEW: str = "View"
     OPEN_IN_FOLDER: str = "Open in Folder"
     DELETE: str = "Delete File"

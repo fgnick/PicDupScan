@@ -39,10 +39,6 @@ class PicDupToolbar(QToolBar):
         colored_pixmap = QPixmap(pixmap.size())
         colored_pixmap.fill(QColor(0,0,0,0)) # Transparent
         
-        # Create a matching blank pixmap for drawing
-        colored_pixmap = QPixmap(pixmap.size())
-        colored_pixmap.fill(QColor(0,0,0,0)) # Transparent
-        
         painter = QPainter(colored_pixmap)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         

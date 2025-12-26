@@ -6,7 +6,6 @@ import sys
 from PyQt6.QtWidgets import QApplication
 from src.qt_picdupscan_gui import PicDupScanGUI
 
-
 # =========================================================
 # Main function to run the application
 # =========================================================
