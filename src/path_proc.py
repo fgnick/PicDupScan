@@ -1,13 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 # ========================================================================================================
-
 from pathlib import Path
 import os
 import sys
 
 class PathProc:
-
     def __init__(self):
         raise Exception( "You cannot construct PathProc class! This is a static class." )
 

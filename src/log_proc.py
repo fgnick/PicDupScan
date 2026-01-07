@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 # ===============================================================================================
-
 import datetime
 import os
 import sys
@@ -38,6 +37,9 @@ class Logger:
     _log_file_name = "log"
     _log_callback = None
     
+    _fileHandle = None
+    _currentLogPath = ""
+    
     # to let user to know the class have no constructor
     def __init__(self):
         raise Exception( "You cannot construct Logger class! This is a static class." )
@@ -64,18 +66,34 @@ class Logger:
             Logger._log_callback(msg_str)
     
         if Logger._logDir == "" or Logger._logDir is None:
-            Logger._logDir = os.path.join(PathProc.get_real_base_path(), "log")
-            os.makedirs(Logger._logDir, exist_ok=True)
+            base_dir = os.path.join(PathProc.get_real_base_path(), "log")
+            os.makedirs(base_dir, exist_ok=True)
+            Logger._logDir = os.path.join(base_dir, Logger._log_file_name + ".log")
 
-            if Logger._logDir is None or Logger._logDir == "":
-                raise Exception( f"Log process cannot find out the project root directory ({Logger._logDir}/{Logger._rootMarkerName}), it needs a marker file to detect to!" )
-            Logger._logDir = Logger._logDir + os.sep + Logger._log_file_name + ".log"
-            #print( f"Log directory: {Logger._logDir}" )
+        # Persistent handle and auto-rotation logic
+        target_path = Logger._logDir + "." + now_time.strftime("%Y%m%d")
         
-        with open( Logger._logDir + "." + now_time.strftime( "%Y%m%d" ), "a", encoding="utf-8" ) as f:
-            f.write( msg_str + "\n" )
-            f.flush()
-            f.close()
+        try:
+            # 1. Close if date changed
+            if Logger._fileHandle is not None and Logger._currentLogPath != target_path:
+                Logger._fileHandle.close()
+                Logger._fileHandle = None
+            
+            # 2. Open if not opened
+            if Logger._fileHandle is None:
+                Logger._fileHandle = open(target_path, "a", encoding="utf-8")
+                Logger._currentLogPath = target_path
+            
+            # 3. Write
+            Logger._fileHandle.write(msg_str + "\n")
+            
+            # 4. Flush only for high-level logs to maximize performance
+            if lv_const >= Logger.LOG_LV_ERROR:
+                Logger._fileHandle.flush()
+                
+        except Exception as e:
+            # Fallback to terminal if file I/O fails
+            print(f"Critical Log Error: {e}")
     
     # You better user the method to set up log dir path, _logDir, value. 
     # It can inhance correctness.
@@ -92,7 +110,7 @@ class Logger:
     
     @staticmethod
     def setTerminalDisplay(flg: bool):
-        if not isinstance( path_str, bool ):
+        if not isinstance( flg, bool ):
             return False
         Logger._print2Terminal = flg
         return True
@@ -103,5 +121,15 @@ class Logger:
             return False
         Logger._log_file_name = file_name
         return True
+
+    @staticmethod
+    def close():
+        if Logger._fileHandle:
+            try:
+                Logger._fileHandle.close()
+            except:
+                pass
+            Logger._fileHandle = None
+            Logger._currentLogPath = ""
         
         

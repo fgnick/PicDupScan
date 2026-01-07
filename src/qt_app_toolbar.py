@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 # ===============================================================================================
-
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QToolBar, QStyle
 from PyQt6.QtGui import QAction, QPainter, QColor, QPixmap, QIcon

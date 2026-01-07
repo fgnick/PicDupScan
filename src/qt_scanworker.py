@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 # ===============================================================================================
-
 import os
 from typing import override
 
 from PyQt6.QtCore import QThread, pyqtSignal
 from PyQt6.QtWidgets import QMessageBox
 
-# custom modules
 from .log_proc import Logger
 from .pic_similar_proc import PicSimilarProc
 from .settings.gui_text import LogText, ErrorText, MsgBoxText
@@ -35,7 +33,7 @@ class QtScanWorker(QThread):
             self.is_config_valid = False
             return
 
-        self.extension_filters = AppConfigs.get_scan_extensions(as_set=True)
+        self.extension_filters = AppConfigs.get_scan_extensions(return_type="set")
         if not self.extension_filters:
             QMessageBox.critical(parent, MsgBoxText.TITLE_CRITICAL, ErrorText.CONFIG_ERROR_SCAN_EXTENSIONS)
             Logger.setLog(Logger.LOG_LV_CRITICAL, ErrorText.CONFIG_ERROR_SCAN_EXTENSIONS)
@@ -61,41 +59,59 @@ class QtScanWorker(QThread):
             
             Logger.setLog(Logger.LOG_LV_INFO, LogText.SCAN_SCOPE.format(scope=", ".join(scope_formatted))) 
 
-            pic_proc = PicSimilarProc()
 
             # Define like function index
             # Each config: (ScopeKey, FilterKey, FindLog, TargetLog, ScanLog, CompareFunc)
-            # Use partials or lambdas if compare func needs extra args like cutoff  <---- maybe not used XDD
+            # Use partials or lambdas if compare func needs extra args like cutoff
             scan_configs = [
-                ("IMAGE", "Image", LogText.FOUND_TARGET_IMAGES, LogText.TARGET_IMAGE, LogText.SCAN_IMAGE, lambda f1, f2: pic_proc.images_are_similar(f1, f2, cutoff=10)),
-                ("RAW",   "Raw",   LogText.FOUND_TARGET_RAWS,   LogText.TARGET_RAW,   LogText.SCAN_RAW,   pic_proc.raws_are_similar),
-                # ("VIDEO", "Video", LogText.FOUND_TARGET_VIDEOS, LogText.TARGET_VIDEO, LogText.SCAN_VIDEO, pic_proc.videos_are_similar)
+                ("IMAGE", "Image", LogText.FOUND_TARGET_IMAGES, LogText.TARGET_IMAGE, LogText.SCAN_IMAGE, PicSimilarProc.calculate_image_hashes, PicSimilarProc.images_compare_cached),
+                ("RAW",   "Raw",   LogText.FOUND_TARGET_RAWS,   LogText.TARGET_RAW,   LogText.SCAN_RAW,   PicSimilarProc.calculate_raw_metadata, PicSimilarProc.raws_compare_cached),
+                ("VIDEO", "Video", LogText.FOUND_TARGET_VIDEOS, LogText.TARGET_VIDEO, LogText.SCAN_VIDEO, PicSimilarProc.calculate_video_hashes, PicSimilarProc.videos_compare_cached)
             ]
 
-            for scope_key, filter_key, log_found, log_target, log_scan, compare_func in scan_configs:
+            for scope_key, filter_key, log_found, log_target, log_scan, calc_func, compare_func in scan_configs:
                 if not self._is_running: break
                 
-                # Check if this category is enabled
                 if not self.scan_scope.get(scope_key, False):
                     continue
 
-                # Get files
                 exts = self.extension_filters.get(filter_key)
-                target_files = pic_proc.get_source_files(self.target_folder_path, exts)
-                scan_files = pic_proc.get_source_files(self.scan_folder_path, exts)
+                target_paths = PicSimilarProc.get_source_files(self.target_folder_path, exts)
+                scan_paths = PicSimilarProc.get_source_files(self.scan_folder_path, exts)
 
-                if target_files and scan_files:
-                    Logger.setLog(Logger.LOG_LV_INFO, log_found.format(count=len(target_files)))
+                if target_paths and scan_paths:
+                    Logger.setLog(Logger.LOG_LV_INFO, log_found.format(count=len(target_paths)))
                     
-                    for file1 in target_files:
+                    # --- Hashing Cache Phase ---
+                    hash_cache = {}
+                    all_unique_files = list(set(target_paths + scan_paths))
+                    
+                    Logger.setLog(Logger.LOG_LV_INFO, f"Pre-calculating features for {len(all_unique_files)} files...")
+                    for i, path in enumerate(all_unique_files):
                         if not self._is_running: break
+                        if i % 10 == 0: # Periodically update status or log
+                             self.log_signal.emit(f"Progress: {i}/{len(all_unique_files)} files processed")
+                        
+                        hash_cache[path] = calc_func(path)
+
+                    # --- Comparison Phase ---
+                    Logger.setLog(Logger.LOG_LV_INFO, "Starting comparison (Fast Phase)...")
+                    for file1 in target_paths:
+                        if not self._is_running: break
+                        h1 = hash_cache.get(file1)
+                        if h1 is None: continue
+
                         Logger.setLog(Logger.LOG_LV_INFO, log_target.format(path=os.path.basename(file1)))
                         
-                        for file2 in scan_files:
+                        for file2 in scan_paths:
                             if not self._is_running: break
-                            Logger.setLog(Logger.LOG_LV_INFO, log_scan.format(path=os.path.basename(file2)))
+                            # Skip if same file
+                            if file1 == file2: continue
                             
-                            if compare_func(file1, file2):
+                            h2 = hash_cache.get(file2)
+                            if h2 is None: continue
+                            
+                            if compare_func(h1, h2):
                                 match_msg = LogText.SCAN_MATCH.format(file1=os.path.basename(file1), file2=os.path.basename(file2))
                                 Logger.setLog(Logger.LOG_LV_INFO, match_msg)
                                 self.duplicate_found_signal.emit(file1, file2)

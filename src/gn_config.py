@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 # ===============================================================================================
-
 import configparser
 
 class gn_ConfRW:
+    # to let user to know the class have no constructor
+    def __init__(self):
+        raise Exception( "You cannot construct gn_ConfRW class! This is a static class." )
     
     @staticmethod
     def configReader(filename, section):

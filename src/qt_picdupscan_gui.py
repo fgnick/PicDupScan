@@ -1,38 +1,40 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 # ===============================================================================================
-
 import os
 import subprocess
 from typing import override
 import send2trash
+import logging
 
-# PyQt6 modules
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QLineEdit, 
                              QPushButton, QTextEdit, QFileDialog, QMessageBox, QMainWindow,
                              QTreeWidget, QTreeWidgetItem, QSplitter, QMenu, QStyleFactory,
-                             QStyle, QStyleOptionViewItem, QStatusBar)
-from PyQt6.QtCore import Qt, QUrl, QPoint, QEvent
+                             QStyle, QStyleOptionViewItem, QStatusBar, QProgressDialog)
+from PyQt6.QtCore import Qt, QUrl, QPoint, QEvent, QCoreApplication
 from PyQt6.QtGui import QDesktopServices, QCursor
 
-# custom modules -- constants
 from .settings.env_constants import EnvConst
-from .settings.gui_text import MenuText, MsgBoxText, AppText, LogText
+from .settings.gui_text import MenuText, MsgBoxText, AppText, LogText, ErrorText
 
-# custom modules -- Qt GUI
 from .qt_scanworker import QtScanWorker
 from .qt_app_menu_bar import PicDupMenu
 from .qt_app_toolbar import PicDupToolbar
 from .qt_image_preview_widget import ImagePreviewWidget
+from .app_configs import AppConfigs
+from .log_proc import Logger
 
 class PicDupScanGUI(QMainWindow):
     def __init__(self):
         super().__init__()
         self.init_ui()
         self.worker = None
+        
+        # Load and apply initial preferences
+        self.apply_initial_preferences()
 
     def __del__(self):
-        print("PicDupScanGUI is deleted and memory is released.")
+        pass
 
     @override
     def closeEvent(self, event):
@@ -40,6 +42,10 @@ class PicDupScanGUI(QMainWindow):
         if self.worker and self.worker.isRunning():
             self.worker.stop()
             self.worker.wait()
+        
+        # Close the log file handle
+        Logger.close()
+        
         event.accept()
 
     def init_ui(self):
@@ -138,6 +144,13 @@ class PicDupScanGUI(QMainWindow):
         # Menu Bar
         self.menu_bar = PicDupMenu(self)
         self.setMenuBar(self.menu_bar)
+        
+        # Connect View Exif toggle
+        self.menu_bar.view_exif_toggled.connect(self.preview_widget.set_exif_visible)
+        self.menu_bar.view_exif_toggled.connect(self.save_exif_preference)
+        # Sync back if closed from widget
+        self.preview_widget.exif_visible_changed.connect(self.menu_bar.view_exif_widget_action.setChecked)
+        self.preview_widget.exif_visible_changed.connect(self.save_exif_preference)
 
         # Tool Bar
         self.toolbar = PicDupToolbar(self)
@@ -150,11 +163,32 @@ class PicDupScanGUI(QMainWindow):
         self.setStatusBar(self.status_bar)
         self.status_bar.showMessage(LogText.SCAN_READY)
 
-        # Set default folder if exists
-        if os.path.exists(EnvConst.TARGET_PATH):
-            self.target_folder_input.setText(os.path.abspath(EnvConst.TARGET_PATH))
-        if os.path.exists(EnvConst.SCAN_PATH):
-            self.scan_folder_input.setText(os.path.abspath(EnvConst.SCAN_PATH))
+        # Set default folder from config if exists
+        env_configs = AppConfigs.get_environment()
+        target_path = env_configs.get("TARGET_PATH", EnvConst.TARGET_PATH)
+        scan_path = env_configs.get("SCAN_PATH", EnvConst.SCAN_PATH)
+
+        if os.path.exists(target_path):
+            self.target_folder_input.setText(os.path.abspath(target_path))
+        if os.path.exists(scan_path):
+            self.scan_folder_input.setText(os.path.abspath(scan_path))
+
+    # apply initial preferences from config file to UI
+    def apply_initial_preferences(self):
+        # --------- for exif panel visibility ---------
+        val = AppConfigs.get_preferences("VIEW_SHOW_EXIF_PANEL")
+        
+        # Convert string "1"/"0" or boolean from config to bool
+        exif_visible = False
+        if val is not False and val is not None:
+            exif_visible = str(val).lower() in ("1", "true", "yes")
+        
+        self.menu_bar.view_exif_widget_action.setChecked(exif_visible)
+        self.preview_widget.set_exif_visible(exif_visible)
+
+    def save_exif_preference(self, visible):
+        if not AppConfigs.save_preferences("VIEW_SHOW_EXIF_PANEL", visible):
+            logging.error(ErrorText.CONFIG_ERROR_PREFERENCES_WRITE)
         
     def browse_target_folder(self):
         folder = QFileDialog.getExistingDirectory(self, AppText.BROWSE_DIALOG_TITLE)
@@ -234,7 +268,7 @@ class PicDupScanGUI(QMainWindow):
                 child = parent.child(j)
                 if child.checkState(0) == Qt.CheckState.Checked:
                     file_path = child.data(0, Qt.ItemDataRole.UserRole)
-                    if file_path and os.path.exists(file_path): # to prevent user has changed the file path or deleted the file
+                    if file_path:
                         items_to_delete.append((child, file_path))
         
         if not items_to_delete:
@@ -242,39 +276,62 @@ class PicDupScanGUI(QMainWindow):
             return
 
         # Confirm delete
-        itemNum = len(items_to_delete)
+        count = len(items_to_delete)
         reply = QMessageBox.question(
             self,
             MsgBoxText.TITLE_CONFIRM,
-            MsgBoxText.MSG_CONFIRM_DELETE_MULTI.format(count=itemNum),
+            MsgBoxText.MSG_CONFIRM_DELETE_MULTI.format(count=count),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
         )
 
-        if reply == QMessageBox.StandardButton.Yes:
-            # Process deletion
-            # We iterate and delete. 
-            # IMPORTANT: Deleting files and updating tree could be tricky if we modify tree while iterating.
-            # But handle_preview_delete finds item by path, so we can just extract paths first.
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        # Progress Dialog
+        progress = QProgressDialog(AppText.PROGRESS_DELETING, AppText.BUTTON_CANCEL, 0, count, self)
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
+        progress.show()
+
+        success_count = 0
+        fail_count = 0
+        
+        for i, (item, path) in enumerate(items_to_delete):
+            if progress.wasCanceled():
+                break
             
-            paths = [path for _, path in items_to_delete]
-            
-            success_count = 0
-            fail_count = 0
-            
-            for path in paths:
-                if path and os.path.exists(path):
-                    try:
-                        send2trash.send2trash(path)
-                        self.handle_preview_delete(path)
-                        success_count += 1
-                    except Exception as e:
-                        print(f"Failed to delete {path}: {e}")
-                        fail_count += 1
-                else:
-                    # Maybe already deleted or invalid? still try to remove from tree
-                    self.handle_preview_delete(path)
-            
-            self.append_log(f"\n[Bulk Delete] Deleted: {success_count}, Failed: {fail_count}")
+            progress.setValue(i)
+            progress.setLabelText(f"{AppText.PROGRESS_DELETING} ({i}/{count})\n{os.path.basename(path)}")
+            QCoreApplication.processEvents()
+
+            if path and os.path.exists(path):
+                try:
+                    send2trash.send2trash(path)
+                    self.remove_item_from_tree(item)
+                    success_count += 1
+                except Exception as e:
+                    print(f"Failed to delete {path}: {e}")
+                    fail_count += 1
+            else:
+                self.remove_item_from_tree(item)
+
+        progress.setValue(count)
+        progress.deleteLater()
+        self.append_log(f"\n[Bulk Delete] Deleted: {success_count}, Failed: {fail_count}")
+
+    def remove_item_from_tree(self, item):
+        """Removes a specific QTreeWidgetItem and cleans up its parent if empty."""
+        path = item.data(0, Qt.ItemDataRole.UserRole)
+        # 1. Clear preview if it's showing the deleted file
+        if self.preview_widget.current_file_path and os.path.normpath(self.preview_widget.current_file_path) == os.path.normpath(path):
+            self.preview_widget.load_images(None, None)
+
+        parent = item.parent()
+        if parent:
+            parent.removeChild(item)
+            if parent.childCount() == 0:
+                self.tree_widget.takeTopLevelItem(self.tree_widget.indexOfTopLevelItem(parent))
+        else:
+            self.tree_widget.takeTopLevelItem(self.tree_widget.indexOfTopLevelItem(item))
 
     def find_treeitem_parent(self, path: str):
         root = self.tree_widget
@@ -337,6 +394,7 @@ class PicDupScanGUI(QMainWindow):
             delete_action.triggered.connect(lambda: self.delete_file(item))
         
         menu.exec(self.tree_widget.viewport().mapToGlobal(position))
+        menu.deleteLater()
 
     def view_file(self, item):
         file_path = item.data(0, Qt.ItemDataRole.UserRole)
@@ -417,16 +475,40 @@ class PicDupScanGUI(QMainWindow):
         self.log_display.clear()
         self.tree_widget.clear()
         self.preview_widget.load_images(None, None) # Clear preview
+        
+        if self.worker:
+            try:
+                # Disconnect only if the underlying C++ object still exists
+                self.worker.log_signal.disconnect(self.append_log)
+                self.worker.duplicate_found_signal.disconnect(self.add_duplicate_to_tree)
+                self.worker.finished_signal.disconnect(self.scan_finished)
+            except (RuntimeError, TypeError):
+                # RuntimeError occurs if C++ object is already deleted
+                # TypeError occurs if signals were not connected
+                pass
 
         self.worker = QtScanWorker(self, target_folder, scan_folder)
+        # Handle automatic cleanup after the thread finishes its job
+        self.worker.finished.connect(self.worker.deleteLater)
+        # Nullify reference when the object is actually destroyed to prevent RuntimeError in closeEvent
+        self.worker.destroyed.connect(self._on_worker_destroyed)
+        
         # Connect log signal to append_log slot
         self.worker.log_signal.connect(self.append_log)
         # Connect duplicate found signal to add_duplicate_to_tree slot
         self.worker.duplicate_found_signal.connect(self.add_duplicate_to_tree)
         # Connect finished signal to scan_finished slot
         self.worker.finished_signal.connect(self.scan_finished)
+        
+        # Start scanning
         self.worker.start()
-        self.status_bar.showMessage(LogText.SCAN_STARTING)
+        self.toolbar.start_action.setEnabled(False)
+        self.toolbar.stop_action.setEnabled(True)
+        self.append_log(LogText.SCAN_STARTING)
+
+    # Callback to clear the reference when the worker QObject is deleted.
+    def _on_worker_destroyed(self):
+        self.worker = None
 
     def stop_scan(self):
         if self.worker:

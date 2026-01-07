@@ -11,6 +11,9 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class EnvConst:
+    # App version
+    APP_VERSION = '2.0.0'
+    
     # Root path
     ROOT_PATH = './'
     

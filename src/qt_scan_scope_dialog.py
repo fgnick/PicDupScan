@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 # ===============================================================================================
-
 from typing import override
 import logging
 
@@ -114,6 +113,7 @@ class ScanScopeDialog(QDialog):
     def open_extension_settings(self):
         dialog = ExtensionSettingsDialog(self)
         if dialog.is_valid:
+            dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
             if dialog.exec() == QDialog.DialogCode.Accepted:
                 # Optional: print or log to verify
                 logging.info(f"Updated scanning filter extensions: {dialog.get_filters()}")
@@ -129,9 +129,9 @@ class ExtensionSettingsDialog(QDialog):
         # Validation before creation
         self.filters = AppConfigs.get_scan_extensions()
         if not self.filters:
-             QMessageBox.critical(parent, MsgBoxText.TITLE_CRITICAL, ErrorText.CONFIG_ERROR_SCAN_EXTENSIONS)
-             self.is_valid = False
-             return
+            QMessageBox.critical(parent, MsgBoxText.TITLE_CRITICAL, ErrorText.CONFIG_ERROR_SCAN_EXTENSIONS)
+            self.is_valid = False
+            return
 
         self.setup_ui()
 

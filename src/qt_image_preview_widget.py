@@ -2,21 +2,24 @@
 # -*- coding: utf-8 -*-
 # ===============================================================================================
 import os
+import re
 import subprocess
 from typing import override
 import send2trash
 import rawpy
 
 from PyQt6.QtWidgets import QFrame, QToolButton, QMenu, QMessageBox
-from PyQt6.QtCore import pyqtSignal, Qt, QUrl, QEvent
+from PyQt6.QtCore import pyqtSignal, Qt, QUrl, QEvent, QTimer
 from PyQt6.QtGui import QPainter, QColor, QImage, QPixmap, QImageReader, QDesktopServices
 
 from .settings.gui_text import MenuText, MsgBoxText, ErrorText
 from .settings.pic_constants import PicConst
 from .qt_exif_compare_widget import ExifCompareWidget
+from .app_configs import AppConfigs
 
 class ImagePreviewWidget(QFrame):
     file_deleted_signal = pyqtSignal(str)
+    exif_visible_changed = pyqtSignal(bool)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -24,6 +27,7 @@ class ImagePreviewWidget(QFrame):
         self.main_pixmap = None
         self.thumb_pixmap = None
         self.current_file_path = None
+        self.thumb_path = None
         
         # "More" Button
         self.more_btn = QToolButton(self)
@@ -50,7 +54,6 @@ class ImagePreviewWidget(QFrame):
         
         # Menu for More Button
         self.menu = QMenu(self)
-        self.action_exif = self.menu.addAction(MenuText.EXIF)
         self.action_view = self.menu.addAction(MenuText.VIEW)
         self.action_open = self.menu.addAction(MenuText.OPEN_IN_FOLDER)
         self.action_delete = self.menu.addAction(MenuText.DELETE)
@@ -60,15 +63,12 @@ class ImagePreviewWidget(QFrame):
         self.action_view.triggered.connect(self.view_file)
         self.action_open.triggered.connect(self.open_in_folder)
         self.action_delete.triggered.connect(self.delete_file)
-        self.action_exif.triggered.connect(self.show_exif)
-        self.action_exif.setCheckable(True)
         
         # Exif Widget
         self.exif_widget = ExifCompareWidget(self)
         self.exif_widget.hide()
-        self.exif_widget.close_signal.connect(self.hide_exif)
+        self.exif_widget.close_signal.connect(self._on_exif_closed_by_widget)
         self.exif_widget.installEventFilter(self) # Install filter to catch resize events on header
-        self.thumb_path = None
         
         # Exif Resizing State
         self._exif_height = 300
@@ -78,7 +78,34 @@ class ImagePreviewWidget(QFrame):
         
         # Position button in top-right
         self.more_btn.move(self.width() - 40, 10)
+
         self.more_btn.hide() # Hide by default
+
+        # Initialize extensions from config for performance
+        self._img_exts = tuple(PicConst.IMG_EXTENSIONS)
+        self._raw_exts = tuple(PicConst.RAW_EXTENSIONS)
+        self._video_exts = tuple(PicConst.VIDEO_EXTENSIONS)
+        self._load_extensions_from_config()
+        
+        # Video Animation State
+        self._video_frames = []
+        self._current_frame_idx = 0
+        self.anim_timer = QTimer(self)
+        self.anim_timer.timeout.connect(self._on_anim_tick)
+
+    # Load extensions from config
+    def _load_extensions_from_config(self):
+        # properly load as tuple from AppConfigs
+        ext_map = AppConfigs.get_scan_extensions(return_type="tuple")
+        if ext_map:
+            if "Image" in ext_map:
+                self._img_exts = ext_map["Image"]
+            if "Raw" in ext_map:
+                self._raw_exts = ext_map["Raw"]
+            if "Video" in ext_map:
+                self._video_exts = ext_map["Video"]
+        else:
+            QMessageBox.critical(self, MsgBoxText.TITLE_CRITICAL, ErrorText.CONFIG_ERROR_SCAN_EXTENSIONS)
 
     @override
     def resizeEvent(self, event):
@@ -88,8 +115,8 @@ class ImagePreviewWidget(QFrame):
         self.more_btn.move(x, y)
         self.more_btn.raise_()
         
-        # Resize Exif Widget
-        if self.exif_widget.isVisible():
+        # Resize Exif Widget - Use isHidden because isVisible returns False during startup
+        if not self.exif_widget.isHidden():
             exif_h = self._exif_height
             # Ensure height is within reasonable bounds
             exif_h = max(100, min(self.height() - 100, exif_h))
@@ -173,22 +200,21 @@ class ImagePreviewWidget(QFrame):
 
         super().mouseMoveEvent(event)
 
-    def hide_exif(self):
-        self.exif_widget.hide()
-        self.action_exif.setChecked(False)
-        self.update()
+    def _on_exif_closed_by_widget(self):
+        self.set_exif_visible(False)
+        self.exif_visible_changed.emit(False)
 
-    def show_exif(self):
-        is_checked = self.action_exif.isChecked()
-        self.exif_widget.setVisible(is_checked)
+    def set_exif_visible(self, visible):
+        self.exif_widget.setVisible(visible)
         
-        if is_checked:
+        if visible:
             # Re-position and load content
             exif_h = self._exif_height
+            # Ensure we use parent's current size
             self.exif_widget.setGeometry(0, self.height() - exif_h, self.width(), exif_h)
             
             if self.current_file_path and self.thumb_path:
-                self.exif_widget.load_exif(self.current_file_path, self.thumb_path)
+                self.exif_widget.load_metadata(self.current_file_path, self.thumb_path)
             self.exif_widget.raise_()
             
         self.update()
@@ -235,8 +261,14 @@ class ImagePreviewWidget(QFrame):
         
         try:
             lower_path = path.lower()
+            
+            # 1. Video Check
+            if lower_path.endswith(self._video_exts):
+                return self._get_video_thumbnail(path)
+
+            # 2. RAW Check
             # Simple check for common RAW formats
-            if lower_path.endswith(tuple(PicConst.RAW_EXTENSIONS)):
+            elif lower_path.endswith(self._raw_exts):
                 with rawpy.imread(path) as raw:
                     # Postprocess to get an RGB image
                     rgb = raw.postprocess(use_camera_wb=True, no_auto_bright=True, output_bps=8)
@@ -244,7 +276,9 @@ class ImagePreviewWidget(QFrame):
                     bytesPerLine = 3 * width
                     qImg = QImage(rgb.data, width, height, bytesPerLine, QImage.Format.Format_RGB888)
                     return QPixmap.fromImage(qImg)
-            else:
+            
+            # 3. Image Check
+            elif lower_path.endswith(self._img_exts):
                 # Use QImageReader to respect EXIF orientation (setAutoTransform)
                 reader = QImageReader(path)
                 reader.setAutoTransform(True)
@@ -253,13 +287,88 @@ class ImagePreviewWidget(QFrame):
                     print(f"Failed to read image: {path}, error: {reader.errorString()}")
                     return None
                 return QPixmap.fromImage(img)
+                
+            return None
         except Exception as e:
             print(f"Error loading image {path}: {e}")
             return None
 
+    def _get_video_thumbnail(self, path):
+        frames = []
+        try:
+            import imageio_ffmpeg   # lazy import
+            ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
+            
+            # 1. Get Duration
+            duration = self._get_video_duration(path, ffmpeg_exe)
+            if not duration or duration < 2:
+                # Fallback to single frame at 1s
+                timestamps = ["00:00:01"]
+            else:
+                # 4 frames: 10%, 35%, 60%, 85%
+                timestamps = [
+                    f"{duration * 0.1:.2f}",
+                    f"{duration * 0.35:.2f}",
+                    f"{duration * 0.60:.2f}",
+                    f"{duration * 0.85:.2f}"
+                ]
+
+            startupinfo = None
+            if os.name == 'nt':
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+
+            for ts in timestamps:
+                cmd = [
+                    ffmpeg_exe, '-ss', ts, '-i', path,
+                    '-vframes', '1', '-f', 'image2pipe', '-vcodec', 'bmp', '-',
+                    '-hide_banner', '-loglevel', 'panic'
+                ]
+                res = subprocess.run(cmd, stdout=subprocess.PIPE, startupinfo=startupinfo, timeout=2)
+                if res.stdout:
+                    img = QImage()
+                    if img.loadFromData(res.stdout):
+                         frames.append(QPixmap.fromImage(img))
+            
+            return frames
+        except Exception as e:
+            # print(f"Video thumb error: {e}")
+            pass
+        return None
+
+    def _get_video_duration(self, path, ffmpeg_exe):
+        try:
+             cmd = [ffmpeg_exe, '-i', path]
+             startupinfo = None
+             if os.name == 'nt':
+                 startupinfo = subprocess.STARTUPINFO()
+                 startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+             
+             res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, startupinfo=startupinfo, timeout=3)
+             output = res.stderr.decode('utf-8', errors='ignore')
+             m = re.search(r"Duration:\s*(\d+):(\d+):(\d+\.\d+)", output)
+             if m:
+                 h, m, s = map(float, m.groups())
+                 return h * 3600 + m * 60 + s
+        except:
+             pass
+        return None
+
+    def _on_anim_tick(self):
+        if not self._video_frames:
+            return
+            
+        self._current_frame_idx = (self._current_frame_idx + 1) % len(self._video_frames)
+        self.main_pixmap = self._video_frames[self._current_frame_idx]
+        self.update()
+
     def load_images(self, main_path, thumb_path):
         self.current_file_path = main_path
         self.thumb_path = thumb_path
+        
+        # Stop previous animation
+        self.anim_timer.stop()
+        self._video_frames = []
         
         # Check if this is a parent view (Source file, not duplicate)
         is_parent = False
@@ -269,10 +378,24 @@ class ImagePreviewWidget(QFrame):
         if is_parent:
             self.main_pixmap = None # Don't show main image for parent
         else:
-            self.main_pixmap = self.get_pixmap(main_path)
+            # Check for video frames
+            res = self.get_pixmap(main_path)
+            if isinstance(res, list) and len(res) > 0:
+                self._video_frames = res
+                self.main_pixmap = res[0]
+                self._current_frame_idx = 0
+                
+                # Only start animation if we have multiple frames
+                if len(self._video_frames) > 1:
+                    self.anim_timer.start(800) # Rotate every 800ms
+            else:
+                self.main_pixmap = res
             
         self.thumb_pixmap = self.get_pixmap(thumb_path)
-        
+        # Verify thumb type (it might return list if thumb is video too)
+        if isinstance(self.thumb_pixmap, list) and len(self.thumb_pixmap) > 0:
+            self.thumb_pixmap = self.thumb_pixmap[0] # Just show first frame for thumbnail
+
         # Show button if we have any image to show
         if self.main_pixmap or self.thumb_pixmap:
             self.more_btn.show()
@@ -284,7 +407,10 @@ class ImagePreviewWidget(QFrame):
             
         # Update exif if visible
         if self.exif_widget.isVisible():
-            self.exif_widget.load_exif(main_path, thumb_path)
+            if is_parent:
+                self.exif_widget.load_metadata(None, thumb_path)
+            else:
+                self.exif_widget.load_metadata(main_path, thumb_path)
 
         self.update() # Trigger repaint
 
@@ -294,9 +420,8 @@ class ImagePreviewWidget(QFrame):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
+        # Draw Main Image (Scaled to fit, keep aspect ratio)
         if self.main_pixmap:
-            # Draw Main Image (Scaled to fit, keep aspect ratio)
-            
             # Adjust drawing area if exif is open
             draw_h = self.height()
             if self.exif_widget.isVisible():
@@ -307,8 +432,8 @@ class ImagePreviewWidget(QFrame):
             y = (draw_h - scaled_main.height()) // 2
             painter.drawPixmap(x, y, scaled_main)
 
+        # Draw Thumbnail (Bottom-Right, 1/4 size of widget or fixed max size)
         if self.thumb_pixmap:
-            # Draw Thumbnail (Bottom-Right, 1/4 size of widget or fixed max size)
             thumb_w = min(200, self.width() // 3)
             thumb_h = min(150, self.height() // 3)
             scaled_thumb = self.thumb_pixmap.scaled(thumb_w, thumb_h, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)

@@ -45,6 +45,14 @@ class AppText:
     # Tree View Text
     TREE_VIEW_TITLE: str = "Duplicate Files"
 
+    # Exif Compare Widget Text
+    EXIF_COMPARE_WIDGET_TITLE: str = "EXIF"
+    EXIF_COMPARE_WIDGET_MAIN_EXIF: str = "Main Info"
+    EXIF_COMPARE_WIDGET_THUMBNAIL_EXIF: str = "Thumbnail Info"
+
+    # Progress Text
+    PROGRESS_DELETING: str = "Deleting files..."
+
 @dataclass(frozen=True)
 class AppMenuBarText:
     FILE: str = "File"
@@ -52,19 +60,26 @@ class AppMenuBarText:
     FILE_CLOSE: str = "Close"
     SETTINGS: str = "Settings"
     SETTINGS_SCAN_FILE_EXTENSIONS: str = "Scan File Extensions"
+    VIEW: str = "View"
+    VIEW_EXIF_PANEL: str = "Show Exif"
     
 
 @dataclass(frozen=True)
 class LogText:
     TARGET_IMAGE: str = "Target Image: {path}"
-    SCAN_IMAGE: str = "Scan Image: {path}"
     TARGET_RAW: str = "Target Raw: {path}"
+    TARGET_VIDEO: str = "Target Video: {path}"
+
+    SCAN_IMAGE: str = "Scan Image: {path}"
     SCAN_RAW: str = "Scan Raw: {path}"
+    SCAN_VIDEO: str = "Scan Video: {path}"
+
     SCAN_MATCH: str = "✅ MATCH: {file1} == {file2}"
     NO_TARGET_FILES: str = "No target image/raw files found in {path}"
     NO_SCAN_FILES: str = "No scan image/raw files found in {path}"
     FOUND_TARGET_IMAGES: str = "Found {count} target images. Starting comparison..."
     FOUND_TARGET_RAWS: str = "Found {count} target raws. Starting comparison..."
+    FOUND_TARGET_VIDEOS: str = "Found {count} target videos. Starting comparison..."
 
     SCAN_READY: str = "Ready"
     SCAN_SCOPE: str = "Scan Scope: {scope}"
@@ -104,5 +119,7 @@ class ErrorText:
     FILE_NOT_FOUND: str = "File does not exist."
     FILE_DELETE_FAILED: str = "Failed to delete file:\n{error}"
     
-    CONFIG_ERROR_SCAN_SCOPE: str = "Failed to read scan scope from config!"
-    CONFIG_ERROR_SCAN_EXTENSIONS: str = "Failed to read scan extensions from config!"
+    CONFIG_ERROR_SCAN_SCOPE: str        = "Failed to read scan scope from config!"
+    CONFIG_ERROR_SCAN_EXTENSIONS: str   = "Failed to read scan extensions from config!"
+    CONFIG_ERROR_PREFERENCES_READ: str  = "Failed to read preferences from config!"
+    CONFIG_ERROR_PREFERENCES_WRITE: str = "Failed to write preferences to config!"
